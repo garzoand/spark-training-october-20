@@ -30,4 +30,5 @@ pi_estimate = 4.0 * points_in_circle / num_samples
 
 print(pi_estimate)
 
+sc.stop()
 
