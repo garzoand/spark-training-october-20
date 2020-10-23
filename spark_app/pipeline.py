@@ -64,9 +64,10 @@ class LogProcessorPipeline:
     def build_pipeline(self, access_log_rdd, evil_ip_list_rdd):
         # Step 1: Create the (raw) access log DF
         df = self.build_access_log_df(access_log_rdd)
-        
-        stat_df = None
-        evil_ip_report_df = None
+        # Step 2: create statistics dataframe
+        stat_df = self.build_stat_df(df)
+        # Step 3: create the report on malicious activity
+        evil_ip_report_df = self.build_evil_ip_report_df(df, evil_ip_list_rdd)
         return (stat_df, evil_ip_report_df)
 
 
@@ -88,3 +89,27 @@ class LogProcessorPipeline:
             .toDF(self.access_log_schema)
         
         return df
+
+    def build_stat_df(self, access_log_df):
+        access_log_df.createOrReplaceTempView('access_log_temp')
+        stat_df = self.spark.sql("""
+        SELECT date, hour, method, resource, response, count(1) as access_count
+        FROM access_log_temp
+        GROUP BY date, hour, method, resource, response
+        """)
+        return stat_df
+
+    def build_evil_ip_report_df(self, access_log_df, ip_rdd):
+        ip_df = ip_rdd.map(process_ip_list).toDF(['evil_ip'])
+        joined_df = access_log_df.join(ip_df.hint('broadcast'), access_log_df.ip == ip_df.evil_ip, 'inner')
+        joined_df.createOrReplaceTempView('evil_ip_view')
+        malicious_activity_df = self.spark.sql("""
+        SELECT evil_ip, count(1) as num_requests
+        FROM evil_ip_view
+        GROUP BY evil_ip
+        ORDER BY num_requests DESC
+        """)
+        return malicious_activity_df
+        
+    
+
